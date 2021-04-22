@@ -6,23 +6,15 @@ extern crate panic_itm; // panic handler
 
 use core::cell::RefCell;
 
-use cortex_m::{asm::bkpt, iprint, iprintln};
+use cortex_m::{iprintln};
 use cortex_m_rt::entry;
 
 use cortex_m::interrupt::{free, Mutex};
 
 use stm32f3_discovery::stm32f3xx_hal;
 use stm32f3xx_hal::{
-    delay::Delay,
-    gpio, pac,
-    pac::interrupt,
-    pac::TIM4,
-    prelude::*,
-    pwm,
-    serial::Serial,
-    time,
-    time::{MegaHertz, MonoTimer},
-    timer::{Event, Timer},
+    pac,
+    pac::interrupt
 };
 
 struct HcSr04Measure {
@@ -52,7 +44,9 @@ impl HcSr04Measure {
                 (Some(m1), None) => {
                     self.measure2 = Some(measure);
                     let m2 = self.measure2.unwrap();
-                    self.distance = Some((m2 - m1) * 17 / 1000);
+                    if m2 > m1 {
+                        self.distance = Some((m2 - m1) * 17 / 1000);
+                    }
                 }
                 (Some(_), Some(_)) => {
                     self.measure1 = Some(measure);
@@ -78,7 +72,7 @@ fn TIM4() {
 
         // front?
         // disable CH3
-        tim4.ccer.modify(|_, w| w.cc3e().clear_bit());
+        //tim4.ccer.modify(|_, w| w.cc3e().clear_bit());
 
         pac::NVIC::unpend(pac::Interrupt::TIM4);
     });
@@ -181,6 +175,7 @@ fn main() -> ! {
             .replace(Some((dp.TIM4, HcSr04Measure::new())));
     });
 
+    let mut last_distance : u16 = 0;
     loop {
         let mut v: Option<u16> = None;
         free(|cs| {
@@ -191,7 +186,10 @@ fn main() -> ! {
         });
 
         if let Some(distance) = v {
-            iprintln!(&mut cp.ITM.stim[0], "distance: {0}", distance)
+            if last_distance != distance {
+                iprintln!(&mut cp.ITM.stim[0], "distance: {0}cm", distance);
+                last_distance = distance;
+            }
         }
     }
 }
