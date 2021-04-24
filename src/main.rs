@@ -6,16 +6,13 @@ extern crate panic_itm; // panic handler
 
 use core::cell::RefCell;
 
-use cortex_m::{iprintln};
+use cortex_m::iprintln;
 use cortex_m_rt::entry;
 
 use cortex_m::interrupt::{free, Mutex};
 
 use stm32f3_discovery::stm32f3xx_hal;
-use stm32f3xx_hal::{
-    pac,
-    pac::interrupt
-};
+use stm32f3xx_hal::{pac, pac::interrupt};
 
 struct HcSr04Measure {
     measure1: Option<u16>,
@@ -28,7 +25,7 @@ impl HcSr04Measure {
         HcSr04Measure {
             measure1: None,
             measure2: None,
-            distance: None
+            distance: None,
         }
     }
 
@@ -37,23 +34,24 @@ impl HcSr04Measure {
     }
 
     fn save_measure(&mut self, measure: u16) {
-        // shiet
-        if measure < 4000 {
-            match (self.measure1, self.measure2) {
-                (None, None) => self.measure1 = Some(measure),
-                (Some(m1), None) => {
-                    self.measure2 = Some(measure);
-                    let m2 = self.measure2.unwrap();
-                    if m2 > m1 {
-                        self.distance = Some((m2 - m1) * 17 / 1000);
+        match (self.measure1, self.measure2) {
+            (None, None) => self.measure1 = Some(measure),
+            (Some(m1), None) => {
+                self.measure2 = Some(measure);
+
+                let m2 = self.measure2.unwrap();
+                if m2 > m1 {
+                    let dividend = m2 - m1;                   
+                    if let Some(v) = dividend.checked_mul(17) {
+                        self.distance = Some(v / 1000);
                     }
                 }
-                (Some(_), Some(_)) => {
-                    self.measure1 = Some(measure);
-                    self.measure2 = None;
-                }
-                (None, Some(_)) => panic!(""),
             }
+            (Some(_), Some(_)) => {
+                self.measure1 = Some(measure);
+                self.measure2 = None;
+            }
+            (None, Some(_)) => panic!(""),
         }
     }
 }
@@ -70,22 +68,18 @@ fn TIM4() {
 
         hcsr04.save_measure(crr1);
 
-        // front?
-        // disable CH3
+        // todo: disable pwm output until edge fall will be received
+        // front? disable CH3
         //tim4.ccer.modify(|_, w| w.cc3e().clear_bit());
 
         pac::NVIC::unpend(pac::Interrupt::TIM4);
-    });
+    });    
 }
 
 #[entry]
 fn main() -> ! {
     let mut cp = cortex_m::Peripherals::take().unwrap();
     let dp = pac::Peripherals::take().unwrap();
-
-    // let mut flash = dp.FLASH.constrain();
-    // let mut rcc = dp.RCC.constrain();
-    // let clocks = rcc.cfgr.freeze(&mut flash.acr);
 
     /* stm32f3 pins:
        PB6 -> TIM4_CH1 (Input capture)
@@ -118,8 +112,8 @@ fn main() -> ! {
     // we need impulse width 10us
     // 50_000 = 50ms
     // х      = 0.01ms
-    // х = 50_000 * 0.01ms / 50ms = 100
-    const CCR3: u16 = 100;
+    // х = 50_000 * 0.01ms / 50ms = 10
+    const CCR3: u16 = 10;
 
     /* TIM4 oscillation */
     dp.RCC.apb1enr.modify(|_, w| w.tim4en().set_bit());
@@ -175,7 +169,11 @@ fn main() -> ! {
             .replace(Some((dp.TIM4, HcSr04Measure::new())));
     });
 
-    let mut last_distance : u16 = 0;
+    //let itm = unsafe { &mut *(cortex_m::peripheral::ITM::ptr() as *mut cortex_m::peripheral::itm::RegisterBlock) };
+
+    iprintln!(&mut cp.ITM.stim[0], "init complete");
+
+    let mut last_distance: u16 = 0;
     loop {
         let mut v: Option<u16> = None;
         free(|cs| {
@@ -183,7 +181,7 @@ fn main() -> ! {
             let (_, hcsr04) = tim4_ref.as_ref().unwrap();
 
             v = hcsr04.get_distance();
-        });
+        });      
 
         if let Some(distance) = v {
             if last_distance != distance {
